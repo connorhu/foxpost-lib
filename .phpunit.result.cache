@@ -1,0 +1,1 @@
+{"version":2,"defects":[],"times":{"CodeConjure\\FoxPost\\Tests\\EnvironmentTest::testTheProductionBaseUrl":0,"CodeConjure\\FoxPost\\Tests\\EnvironmentTest::testTheSandboxBaseUrl":0,"CodeConjure\\FoxPost\\Tests\\EnvironmentTest::testTheSandboxFlagFalseMeansProduction":0,"CodeConjure\\FoxPost\\Tests\\EnvironmentTest::testTheSandboxFlagTrueMeansSandbox":0}}
