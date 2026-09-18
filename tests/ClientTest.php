@@ -214,6 +214,28 @@ final class ClientTest extends TestCase
         }
     }
 
+    /**
+     * A régi kód (`FoxPostApiClient.php:189-196`) üres törzzsel, de
+     * `FoxPostApiException`-nel bukott, ha a hibaválasz törzse nem volt
+     * olvasható. A törzs-olvasásnak ezért védőhálóban kell lennie: a hiba
+     * NEM szökhet ki nyers `RuntimeException`-ként.
+     */
+    public function testAnUnreadableErrorBodyStillBecomesAFoxPostApiException(): void
+    {
+        $response = new Response(500, [], 'hiba');
+        $response->getBody()->close();
+
+        $client = $this->client($response);
+
+        try {
+            $client->getTracking('CSOMAG1');
+            self::fail('Kivételt vártunk.');
+        } catch (FoxPostApiException $e) {
+            self::assertStringContainsString('FoxPost API hiba (HTTP 500)', $e->getMessage());
+            self::assertSame(500, $e->getCode());
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Base URL választás
     // -------------------------------------------------------------------------
@@ -370,6 +392,26 @@ final class ClientTest extends TestCase
         self::assertSame('{"recipientName":"Teszt Elek"}', (string) $request->getBody());
     }
 
+    /**
+     * A régi Symfony HttpClient a `json` opcióra a
+     * `HttpClientTrait::jsonEncode()` alapértelmezésével kódolt:
+     * `JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_PRESERVE_ZERO_FRACTION`
+     * (lásd `vendor/symfony/http-client/HttpClientTrait.php:559` a boltban) —
+     * `JSON_UNESCAPED_UNICODE` NINCS köztük, tehát az ékezetes karakterek is
+     * `\uXXXX` alakban mennek ki, a `<`/`>`/`/` pedig escape-elve. Ez rögzíti,
+     * hogy a drótformátum a kiszervezés után is ugyanaz marad.
+     */
+    public function testTheRequestBodyUsesTheSameJsonEscapingAsBefore(): void
+    {
+        $this->client(new Response(200, [], '{"barcode":"CSOMAG1"}'))
+            ->createParcel(['recipientName' => 'Kovács Béla', 'comment' => 'a/b <x>']);
+
+        self::assertSame(
+            '{"recipientName":"Kov\u00e1cs B\u00e9la","comment":"a\/b \u003Cx\u003E"}',
+            (string) $this->lastRequest()->getBody(),
+        );
+    }
+
     public function testDeleteParcelCallsTheParcelEndpointWithTheBarcode(): void
     {
         $this->client(new Response(200, [], ''))->deleteParcel('CSOMAG1');
@@ -466,6 +508,49 @@ final class ClientTest extends TestCase
         $this->expectExceptionMessage('Csomagautomata lista lekérés sikertelen');
 
         $client->getParcelLockers();
+    }
+
+    /**
+     * A CDN-kérésnek NEM szabad hitelesítő adatot vinnie — a CDN-nek nem kell,
+     * és felesleges naplózódna. A régi kód is csak `Accept: * / *`-ot küldött.
+     */
+    public function testTheCdnRequestCarriesNoCredentials(): void
+    {
+        $this->client(new Response(200, [], '[]'))->getParcelLockers();
+
+        $request = $this->lastRequest();
+
+        self::assertSame('', $request->getHeaderLine('Authorization'));
+        self::assertSame('', $request->getHeaderLine('Api-key'));
+    }
+
+    /**
+     * A régi kód a `getContent()`-en keresztül nem-2xx válaszra dobott — a
+     * `getParcelLockers()`-nek is így kell tennie, különben egy hibás CDN
+     * válasz (pl. 401, üres törzs) némán üres listaként jelenik meg hiba
+     * helyett.
+     */
+    #[DataProvider('cdnErrorStatusProvider')]
+    public function testANonSuccessfulCdnResponseBecomesAFoxPostApiException(int $status, string $body): void
+    {
+        $client = $this->client(new Response($status, [], $body));
+
+        try {
+            $client->getParcelLockers();
+            self::fail('Kivételt vártunk.');
+        } catch (FoxPostApiException $e) {
+            self::assertStringContainsString(sprintf('Csomagautomata lista lekérés sikertelen: HTTP %d', $status), $e->getMessage());
+            self::assertSame($status, $e->getCode());
+        }
+    }
+
+    /**
+     * @return iterable<string, array{int, string}>
+     */
+    public static function cdnErrorStatusProvider(): iterable
+    {
+        yield '404, érvényes JSON törzzsel' => [404, '{"error":"nincs ilyen"}'];
+        yield '401, üres lista törzzsel' => [401, '[]'];
     }
 
     // -------------------------------------------------------------------------

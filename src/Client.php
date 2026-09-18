@@ -120,12 +120,22 @@ final class Client
      */
     public function getParcelLockers(): array
     {
-        $request = $this->requestFactory->createRequest('GET', self::PARCEL_LOCKERS_URL);
+        $request = $this->requestFactory->createRequest('GET', self::PARCEL_LOCKERS_URL)
+            ->withHeader('Accept', 'application/json');
 
         try {
-            $response = $this->httpClient->sendRequest($this->withDefaultHeaders($request));
+            $response = $this->httpClient->sendRequest($request);
         } catch (ClientExceptionInterface $e) {
             throw new FoxPostApiException('Csomagautomata lista lekérés sikertelen: ' . $e->getMessage(), 0, $e);
+        }
+
+        $statusCode = $response->getStatusCode();
+
+        if ($statusCode >= 300) {
+            throw new FoxPostApiException(
+                sprintf('Csomagautomata lista lekérés sikertelen: HTTP %d', $statusCode),
+                $statusCode,
+            );
         }
 
         $lockers = [];
@@ -171,7 +181,10 @@ final class Client
 
         if ($json !== null) {
             $request = $request->withBody(
-                $this->streamFactory->createStream(json_encode($json, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES)),
+                $this->streamFactory->createStream(json_encode(
+                    $json,
+                    \JSON_HEX_TAG | \JSON_HEX_APOS | \JSON_HEX_AMP | \JSON_HEX_QUOT | \JSON_PRESERVE_ZERO_FRACTION | \JSON_THROW_ON_ERROR,
+                )),
             );
         }
 
@@ -190,8 +203,15 @@ final class Client
         }
 
         if ($statusCode >= 400) {
+            $body = '';
+
+            try {
+                $body = (string) $response->getBody();
+            } catch (\Throwable) {
+            }
+
             throw new FoxPostApiException(
-                sprintf('FoxPost API hiba (HTTP %d): %s', $statusCode, (string) $response->getBody()),
+                sprintf('FoxPost API hiba (HTTP %d): %s', $statusCode, $body),
                 $statusCode,
             );
         }
