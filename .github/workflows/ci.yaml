@@ -1,0 +1,79 @@
+name: CI
+
+on:
+    push: ~
+    pull_request: ~
+    workflow_dispatch: ~
+
+permissions:
+    contents: read
+
+jobs:
+    checks:
+        name: "Tesztek és statikus ellenőrzés (PHP ${{ matrix.php }})"
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                php: ['8.4', '8.5']
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: ${{ matrix.php }}
+                  coverage: none
+
+            # A vendor előtt fut: a manifest érvényessége nem igényel telepítést,
+            # és ha a composer.json hibás, ezt akarjuk látni, nem egy feloldási hibát.
+            - name: A composer.json érvényessége
+              run: composer validate --strict
+
+            - uses: ramsey/composer-install@v3
+              with:
+                  dependency-versions: highest
+
+            - name: Unit tesztek
+              run: vendor/bin/phpunit
+
+            - name: PHPStan
+              run: vendor/bin/phpstan analyse -c phpstan.dist.neon --no-progress
+
+            - name: ECS
+              run: vendor/bin/ecs check --no-progress-bar
+
+    lowest:
+        name: "A legalacsonyabb függőségek (PHP 8.4)"
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.4'
+                  coverage: none
+
+            - name: A composer.json érvényessége
+              run: composer validate --strict
+
+            - uses: ramsey/composer-install@v3
+              with:
+                  dependency-versions: lowest
+
+            # Itt SZÁNDÉKOSAN csak a tesztek futnak, statikus elemzés és
+            # kódstílus nélkül. A `--prefer-lowest` a FEJLESZTŐI eszközöket is
+            # a legalacsonyabb verziójukra húzza, és ez mérve nem a csomag
+            # kódjáról szóló bukásokat ad:
+            #
+            #   - `easy-coding-standard` → egy 2021-es kiadás (ECSPrefix20211207),
+            #     ami a mai `ecs.php`-t nem tudja beolvasni:
+            #     "Could not resolve argument Symplify\...\ECSConfig $config";
+            #   - `phpstan/phpstan` → 2.0.0.
+            #
+            # A `lowest` job kérdése az, hogy a DEKLARÁLT futásidejű alsó
+            # határok (a három PSR-csomag) tartanak-e — erre a 60 teszt a
+            # bizonyíték. A futás emellett vendor-eredetű deprecationöket is
+            # kiír (`nyholm/psr7` 1.8.0, implicit nullable): ezek a legalacsonyabb
+            # tesztdupla-verzióból jönnek, nem a `src/`-ből, és nem buktatnak.
+            - name: Unit tesztek
+              run: vendor/bin/phpunit
